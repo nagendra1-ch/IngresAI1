@@ -1,0 +1,55 @@
+# Python virtual environment
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+
+# Environment files & secrets
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Databases (SQLite) & backups
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.bak
+**/*.bak
+backend/groundwater.db
+backend/ingres_ai.db
+ingres_ai.db
+ingres_ai_backup.db
+backend/scratch/
+states/
+
+# Node dependencies and build folders
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Python cache / bytecode
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Vercel folder
+.vercel/
+
+.vercel

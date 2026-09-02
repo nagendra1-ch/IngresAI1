@@ -1,0 +1,14 @@
+/* 
+ * index.css — Minimal global stub.
+ * The INGRES AI design system lives in src/styles/main.css and variables.css.
+ * This file intentionally avoids defining h1, h2, or body layout rules
+ * to prevent conflicts with the application-level styles.
+ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color-scheme: light dark;
+}

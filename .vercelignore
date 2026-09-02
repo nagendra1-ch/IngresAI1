@@ -1,0 +1,73 @@
+# Ignore large databases & backups
+*.db
+*.db*
+*.db-shm
+*.db-wal
+*.db-journal
+*.bak
+**/*.db
+**/*.db*
+**/*.db-shm
+**/*.db-wal
+**/*.db-journal
+**/*.bak
+ingres_ai.db
+ingres_ai_backup.db
+backend/ingres_ai.db
+backend/groundwater.db
+backend/ingres_ai.db.bak
+
+# Ignore virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+**/venv/**
+**/.venv/**
+
+# Ignore node modules
+node_modules/
+frontend/node_modules/
+**/node_modules/**
+
+# Ignore local environment configurations & secrets
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Ignore build artifacts
+dist/
+frontend/dist/
+**/dist/**
+
+# Ignore Python bytecode / caches
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Ignore local development/test/seed files & scratch
+states/
+backend/data/
+backend/tests/
+backend/scratch/
+backend/scripts/
+*.txt
+!requirements.txt
+!**/requirements.txt
+
+# Ignore IDE settings & local run logs
+.vscode/
+.idea/
+.vercel/
+.git/
+Thumbs.db
+.DS_Store
