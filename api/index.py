@@ -16,14 +16,8 @@ for p in candidates:
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
 
-try:
-    from app.main import app
-except Exception as e:
-    err_msg = str(e)
-    tb = traceback.format_exc()
-    from fastapi import FastAPI
-    from fastapi.responses import JSONResponse
-    app = FastAPI()
-    @app.api_route("/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE"])
-    async def catch_all(path_name: str):
-        return JSONResponse(status_code=500, content={"error": err_msg, "traceback": tb})
+from app.main import app
+
+# Top-level ASGI exports for Vercel Python runtime
+handler = app
+application = app
