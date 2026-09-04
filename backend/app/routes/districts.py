@@ -38,29 +38,36 @@ def resolve_district_response(db: Session, geo: Geography):
     gwra_all = db.query(GWRAAssessment).filter_by(geography_id=geo.id).order_by(GWRAAssessment.assessment_year.desc()).all()
     gwra = gwra_all[0] if gwra_all else None
 
-    # 2. Single query for all Groundwater Observations for this district
-    obs_all = db.query(GroundwaterObservation).filter(GroundwaterObservation.geography_id == geo.id).all()
+    # 2. Single query for all Groundwater Observations for this district across its observation network
+    obs_all = db.query(GroundwaterObservation).join(Geography).filter(
+        Geography.normalized_state_name == geo.normalized_state_name,
+        Geography.normalized_district_name == geo.normalized_district_name
+    ).all()
     if not obs_all:
-        obs_all = db.query(GroundwaterObservation).join(Geography).filter(
-            Geography.normalized_state_name == geo.normalized_state_name,
-            Geography.normalized_district_name == geo.normalized_district_name
-        ).all()
+        obs_all = db.query(GroundwaterObservation).filter(GroundwaterObservation.geography_id == geo.id).all()
+
+    # Prefer district-level observations for primary average if present, or all district observations
+    dist_obs_all = [o for o in obs_all if o.geography_id == geo.id]
+    target_obs = dist_obs_all if dist_obs_all else obs_all
 
     obs_by_year = defaultdict(list)
-    for o in obs_all:
+    for o in target_obs:
         if o.depth_to_water_level_m_bgl is not None:
             obs_by_year[o.observation_year].append(o)
 
     # 3. Single query for all Rainfall Records for this district
-    rain_all = db.query(RainfallRecord).filter(RainfallRecord.geography_id == geo.id).all()
+    rain_all = db.query(RainfallRecord).join(Geography).filter(
+        Geography.normalized_state_name == geo.normalized_state_name,
+        Geography.normalized_district_name == geo.normalized_district_name
+    ).all()
     if not rain_all:
-        rain_all = db.query(RainfallRecord).join(Geography).filter(
-            Geography.normalized_state_name == geo.normalized_state_name,
-            Geography.normalized_district_name == geo.normalized_district_name
-        ).all()
+        rain_all = db.query(RainfallRecord).filter(RainfallRecord.geography_id == geo.id).all()
+
+    dist_rain_all = [r for r in rain_all if r.geography_id == geo.id]
+    target_rain = dist_rain_all if dist_rain_all else rain_all
 
     rain_by_year = defaultdict(list)
-    for r in rain_all:
+    for r in target_rain:
         if r.rainfall_mm is not None:
             rain_by_year[r.rainfall_year].append(r)
 
@@ -76,13 +83,6 @@ def resolve_district_response(db: Session, geo: Geography):
         depth_period = latest_obs_list[0].observation_date if latest_obs_list else None
     else:
         avg_depth, depth_year, depth_src, depth_period = None, None, None, None
-
-    indicator = None
-    if len(all_obs_depths) >= 2 and avg_depth is not None:
-        min_d, max_d = min(all_obs_depths), max(all_obs_depths)
-        if max_d > min_d:
-            val = ((max_d - avg_depth) / (max_d - min_d)) * 100.0
-            indicator = round(max(0.0, min(100.0, val)), 2)
 
     # Compute latest rainfall in memory
     avg_rain, rain_year, rain_period_type, rain_month, rain_src = None, None, None, None, None
@@ -126,6 +126,19 @@ def resolve_district_response(db: Session, geo: Geography):
             avg_depth = get_official_depth_fallback(geo.state_name, geo.district_name)
             depth_year = 2026
             depth_src = "CGWB Fallback (cgwb.gov.in)"
+
+    # Compute Groundwater Level Indicator % (derived from historical reference range or configured standard scale)
+    indicator = None
+    if avg_depth is not None:
+        if len(all_obs_depths) >= 2:
+            min_d, max_d = min(all_obs_depths), max(all_obs_depths)
+            if max_d > min_d:
+                val = ((max_d - avg_depth) / (max_d - min_d)) * 100.0
+                indicator = round(max(0.0, min(100.0, val)), 2)
+            else:
+                indicator = round(max(0.0, min(100.0, ((40.0 - avg_depth) / 40.0) * 100.0)), 2)
+        else:
+            indicator = round(max(0.0, min(100.0, ((40.0 - avg_depth) / 40.0) * 100.0)), 2)
 
     # Ensure Rainfall is not null via historical search or official fallback
     if avg_rain is None:
