@@ -26,6 +26,7 @@ from app.routes.compare import router as compare_router
 from app.routes.dashboard import router as dashboard_router
 from app.routes.ai import router as ai_router
 from app.routes.admin import router as admin_router
+from app.routes.prediction import router as prediction_router
 
 app = FastAPI(
     title="INGRES AI API",
@@ -54,6 +55,7 @@ app.include_router(compare_router)
 app.include_router(dashboard_router)
 app.include_router(ai_router)
 app.include_router(admin_router)
+app.include_router(prediction_router)
 
 @app.get("/")
 @app.get("/api")
