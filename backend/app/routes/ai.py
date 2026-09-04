@@ -12,7 +12,10 @@ from app.routes.auth import get_current_user
 from app.schemas.query import ChatRequest, ChatResponse, QueryOut, LocationSchema, AssessmentSchema, GroundwaterSchema, RainfallSchema, ResourcesSchema, ConversationContextSchema
 from app.services.gemini_service import GeminiService
 from app.services.weather_service import WeatherService
+from app.services.knowledge_base import resolve_domain_knowledge
+from app.services.prediction_service import WaterLevelPredictionService
 from app.routes.districts import resolve_district_response
+
 from app.config import settings
 from app.utils.temporal import normalize_period_with_year, validate_and_normalize_metadata
 from collections import defaultdict
@@ -650,8 +653,55 @@ def generate_factual_response(details: dict) -> str:
         f"* Dataset: IN-GRES Groundwater Dataset\n"
     )
 
+def format_prediction_response(pred: dict) -> str:
+    """Formats hydro-statistical predictive model output into rich Markdown."""
+    d_name = pred["district_name"]
+    s_name = pred["state_name"]
+    b = pred["baseline"]
+    series = pred["projected_series"]
+    scenarios = pred["all_scenarios_comparison"]
+    insights = pred["insights"]
+    meta = pred["methodology"]
+
+    rows = []
+    for p in series:
+        rows.append(
+            f"| **{p['year']}** | **{p['depth_to_water_level_m_bgl']:.2f} m bgl** | {p['confidence_lower_m_bgl']:.2f} – {p['confidence_upper_m_bgl']:.2f} m | {p['stage_of_extraction_percent']:.1f}% | {p['category']} | {p['risk_level']} |"
+        )
+    table_str = "\n".join(rows)
+
+    scen_items = []
+    for k, s in scenarios.items():
+        chg_sign = "+" if s["depth_change_m"] >= 0 else ""
+        scen_items.append(
+            f"* **{s['icon']} {s['name']}**: Projected Depth **{s['final_year_depth_m_bgl']:.2f} m bgl** (Change: {chg_sign}{s['depth_change_m']:.2f} m) · Status: **{s['final_year_category']}**"
+        )
+    scenarios_str = "\n".join(scen_items)
+
+    insights_str = "\n".join([f"* **{i['title']}**: {i['content']}" for i in insights])
+
+    return (
+        f"## 🔮 Future Groundwater Level Prediction — {d_name} ({s_name})\n\n"
+        f"### 📍 Current Baseline ({b['year']})\n"
+        f"* **Depth to Water Level**: **{b['depth_to_water_level_m_bgl']:.2f} m bgl**\n"
+        f"* **Stage of Extraction**: **{b['stage_of_extraction_percent']:.1f}%** (Category: **{b['category']}**)\n"
+        f"* **Historical Trend Rate**: **{b['annual_trend_rate_m_per_year']:+.2f} m/year** (Evaluated across {b['historical_data_points_count']} historical observation years)\n\n"
+        f"### 📈 Multi-Year Model Projections (Baseline Normal Scenario)\n\n"
+        f"| Year | Projected Depth | 80% Confidence Interval | Stage of Extraction | Projected Category | Risk Level |\n"
+        f"|:---:|:---:|:---:|:---:|:---:|:---:|\n"
+        f"{table_str}\n\n"
+        f"### 🌦️ Multi-Scenario Impact Analysis\n"
+        f"{scenarios_str}\n\n"
+        f"### 💡 Key Findings & Advisory\n"
+        f"{insights_str}\n\n"
+        f"---\n"
+        f"**Model Type:** {meta['label']} · {meta['data_source']}\n\n"
+        f"*{meta['disclaimer']}*"
+    )
+
+
 def is_greeting_or_help_query(query: str) -> bool:
-    """Detects general greetings, pleasantries, and introductory questions."""
+    """Detects general greetings and pleasantries (pure greetings only)."""
     q = query.lower().strip()
     q_clean = re.sub(r'[^\w\s]', '', q).strip()
     
@@ -660,18 +710,20 @@ def is_greeting_or_help_query(query: str) -> bool:
     if re.match(greeting_pattern, q_clean):
         return True
         
-    intro_phrases = {
-        "who are you", "what are you", "what can you do", "what is ingres", "what is this",
-        "what is in-gres", "what is ingres ai", "how can you help", "how to use",
-        "help", "help me", "tell me about yourself", "introduce yourself",
-        "what do you do", "menu", "start", "capabilities", "how are you", "how r u"
+    pure_greetings = {
+        "hi", "hey", "hello", "namaste", "vanakkam", "greetings",
+        "good morning", "good afternoon", "good evening", "how are you", "how r u"
     }
-    if q_clean in intro_phrases or any(q_clean.startswith(p) for p in intro_phrases):
+    if q_clean in pure_greetings:
         return True
         
     return False
 
 def is_unrelated_query(query: str) -> bool:
+    # Domain knowledge questions (What is INGRES, GEC, categories, formulas, guide) are fully in-scope
+    if resolve_domain_knowledge(query) is not None:
+        return False
+
     # Greetings or introductory commands are fully in-scope
     if is_greeting_or_help_query(query):
         return False
@@ -692,7 +744,7 @@ def is_unrelated_query(query: str) -> bool:
         "mandal", "mandals", "village", "villages", "state", "states", "compare", "conservation",
         "harvesting", "pit", "pits", "dam", "dams", "tank", "tanks", "pond", "ponds", "trench", "trenches",
         "watershed", "drip", "sprinkler", "ambedkar", "konaseema", "ysr", "kadapa", "guntur", "ananthapuramu",
-        "kurnool", "theni", "nilgiris"
+        "kurnool", "theni", "nilgiris", "ingres", "in-gres", "gec", "ham", "mbgl", "m bgl", "indicator", "methodology"
     }
     
     words = re.findall(r'[a-z0-9]+', query_lower)
@@ -1108,7 +1160,33 @@ def chat_with_assistant(
     is_clarifying = conv.pending_intent is not None and conv.pending_location is not None
     is_followup = conv.current_intent is not None or conv.last_user_question is not None
 
-    # 0. Check for greetings or introductory questions
+    # 0. Check for conceptual domain knowledge or FAQ questions first
+    domain_match = resolve_domain_knowledge(query_text)
+    if domain_match and not is_clarifying:
+        response_text = domain_match["response"]
+        sources = domain_match.get("sources", ["Central Ground Water Board (CGWB)", "IN-GRES"])
+        
+        asst_msg = ConversationMessage(conversation_id=conv_id, sender="assistant", text=response_text)
+        db.add(asst_msg)
+        db.commit()
+        save_query_history(db, current_user.id, query_text, response_text, None)
+        return {
+            "query": query_text,
+            "response": response_text,
+            "conversation_id": conv_id,
+            "location": None,
+            "assessment": None,
+            "groundwater": None,
+            "rainfall": None,
+            "resources": None,
+            "sources": sources,
+            "conversation_context": {
+                "location_resolved": False,
+                "intent_resolved": True
+            }
+        }
+
+    # 1. Check for pure greetings (hi, hello, namaste, etc.)
     if is_greeting_or_help_query(query_text) and not is_clarifying and not is_followup:
         response_text = (
             "Hello! 👋 I am the **IN-GRES AI Assistant** for India's Ground Water Resource Estimation System.\n\n"
@@ -1141,7 +1219,7 @@ def chat_with_assistant(
             }
         }
 
-    # 1. Check for unrelated query (but bypass if there is a pending clarification or active follow-up!)
+    # 2. Check for unrelated query (but bypass if there is a pending clarification or active follow-up!)
     if is_unrelated_query(query_text) and not is_clarifying and not is_followup:
         response_text = "This question is outside the scope of IN-GRES AI. I can help with groundwater levels, groundwater resources, rainfall, recharge, extraction, GWRA assessments, groundwater conservation, and related topics."
         
@@ -1469,8 +1547,121 @@ def chat_with_assistant(
                 }
             }
 
+    # -----------------------------------------------------------------------
+    # FUTURE WATER LEVEL PREDICTION INTENT
+    # -----------------------------------------------------------------------
+    is_water_level_prediction = any(x in query_lower for x in [
+        "predict future", "future water level", "future water levels", "predict water level",
+        "predict groundwater", "forecast water level", "forecast groundwater", "projected water level",
+        "future water table", "predict water table", "water level prediction", "predict levels",
+        "predicting future water", "predict future levels", "predict the future", "predicting water level",
+        "water level in 2027", "water level in 2028", "water level in 2029", "water level in 2030", "water level in 2031",
+        "groundwater level in 2027", "groundwater level in 2028", "groundwater level in 2029", "groundwater level in 2030", "groundwater level in 2031",
+        "future levels", "future level"
+    ]) or (
+        any(x in query_lower for x in ["predict", "prediction", "predicting", "forecast", "projection"])
+        and any(x in query_lower for x in ["water level", "groundwater", "water table", "depth", "water"])
+        and "recharge" not in query_lower
+    )
+
+    if is_water_level_prediction:
+        target_geo = None
+        if len(matched_geos) >= 1:
+            target_geo = matched_geos[0]
+        elif conv.current_geography_id:
+            target_geo = db.query(Geography).get(conv.current_geography_id)
+
+        if target_geo:
+            # Determine scenario if requested
+            scenario_key = "normal"
+            if any(x in query_lower for x in ["drought", "deficit", "dry", "less rain", "low rain"]):
+                scenario_key = "drought"
+            elif any(x in query_lower for x in ["surplus", "excess", "heavy rain", "good rain", "high rain"]):
+                scenario_key = "surplus"
+            elif any(x in query_lower for x in ["conserve", "conservation", "harvesting", "recharge structure", "efficiency"]):
+                scenario_key = "conservation"
+
+            # Determine horizon
+            years_ahead = 5
+            for yr in [2027, 2028, 2029, 2030, 2031]:
+                if str(yr) in query_lower:
+                    years_ahead = max(1, min(10, yr - 2026))
+                    break
+
+            pred_result = WaterLevelPredictionService.predict_district(
+                db=db,
+                district_name=target_geo.district_name,
+                years_ahead=years_ahead,
+                scenario_key=scenario_key
+            )
+
+            if pred_result:
+                response_text = format_prediction_response(pred_result)
+                asst_msg = ConversationMessage(conversation_id=conv_id, sender="assistant", text=response_text)
+                db.add(asst_msg)
+                db.commit()
+                save_query_history(db, current_user.id, query_text, response_text, target_geo.id)
+
+                return {
+                    "query": query_text,
+                    "response": response_text,
+                    "conversation_id": conv_id,
+                    "location": {
+                        "country": target_geo.country_name,
+                        "state": target_geo.state_name,
+                        "district": target_geo.district_name
+                    },
+                    "assessment": {
+                        "year": pred_result["baseline"]["year"],
+                        "category": pred_result["baseline"]["category"]
+                    },
+                    "groundwater": {
+                        "depth_to_water_level_m_bgl": pred_result["baseline"]["depth_to_water_level_m_bgl"],
+                        "groundwater_level_indicator_percent": None
+                    },
+                    "rainfall": None,
+                    "resources": {
+                        "stage_of_extraction_percent": pred_result["baseline"]["stage_of_extraction_percent"],
+                        "annual_recharge_ham": None,
+                        "annual_extractable_resource_ham": None,
+                        "annual_extraction_ham": None,
+                        "net_groundwater_availability_ham": None
+                    },
+                    "sources": [pred_result["methodology"]["label"], pred_result["methodology"]["data_source"]],
+                    "conversation_context": {
+                        "location_resolved": True,
+                        "intent_resolved": True
+                    }
+                }
+        else:
+            prompt_resp = (
+                "🔮 **Future Groundwater Level Prediction**\n\n"
+                "I can generate hydro-statistical multi-year water level projections, confidence intervals, and scenario forecasts for any district in India.\n\n"
+                "Please specify a district name (e.g., *'Predict future water level in Kadapa'* or *'Forecast water level in Ananthapuramu for next 3 years'*)."
+            )
+            asst_msg = ConversationMessage(conversation_id=conv_id, sender="assistant", text=prompt_resp)
+            db.add(asst_msg)
+            db.commit()
+            save_query_history(db, current_user.id, query_text, prompt_resp, None)
+            return {
+                "query": query_text,
+                "response": prompt_resp,
+                "conversation_id": conv_id,
+                "location": None,
+                "assessment": None,
+                "groundwater": None,
+                "rainfall": None,
+                "resources": None,
+                "sources": ["IN-GRES Predictive Modeling Engine"],
+                "conversation_context": {
+                    "location_resolved": False,
+                    "intent_resolved": True
+                }
+            }
+
     is_future_recharge = "recharge" in query_lower and any(x in query_lower for x in ["future", "predict", "forecast", "next", "2027", "2028", "2029"])
     if is_future_recharge:
+
         recharge_str = "Data unavailable"
         loc_name = ""
         district_name_str = None

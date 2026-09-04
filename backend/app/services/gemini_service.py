@@ -5,6 +5,8 @@ import json
 import re
 from app.utils.temporal import normalize_period_with_year, validate_and_normalize_metadata
 
+from app.services.knowledge_base import resolve_domain_knowledge
+
 logger = logging.getLogger(__name__)
 
 if settings.GEMINI_API_KEY:
@@ -28,11 +30,11 @@ class GeminiService:
             
         try:
             prompt = (
-                "You are an NLP entity and intent classifier for the India Groundwater Information System.\n"
+                "You are an NLP entity and intent classifier for the India Groundwater Information System (INGRES).\n"
                 "Analyze the query and identify: intent, district name, state name, district name 2 (if comparison), state name 2 (if comparison), and is_comparison_requested.\n"
                 "Return strictly a raw JSON object with no markdown styling, no backticks, containing exactly these keys:\n"
                 "{\n"
-                "  \"intent\": \"GROUNDWATER_LEVEL\" | \"GROUNDWATER_RESOURCE\" | \"RAINFALL\" | \"RECHARGE\" | \"EXTRACTION\" | \"STAGE_OF_EXTRACTION\" | \"ASSESSMENT_CATEGORY\" | \"NET_GROUNDWATER_AVAILABILITY\" | \"DISTRICT_STATUS\" | \"COMPARISON\" | \"HISTORICAL_TREND\" | \"GENERAL_GROUNDWATER\" | \"WEATHER\" | \"UNRELATED\",\n"
+                "  \"intent\": \"GROUNDWATER_LEVEL\" | \"GROUNDWATER_RESOURCE\" | \"RAINFALL\" | \"RECHARGE\" | \"EXTRACTION\" | \"STAGE_OF_EXTRACTION\" | \"ASSESSMENT_CATEGORY\" | \"NET_GROUNDWATER_AVAILABILITY\" | \"DISTRICT_STATUS\" | \"COMPARISON\" | \"HISTORICAL_TREND\" | \"GENERAL_GROUNDWATER\" | \"WEATHER\" | \"DOMAIN_KNOWLEDGE\" | \"UNRELATED\",\n"
                 "  \"location_district\": string or null,\n"
                 "  \"location_state\": string or null,\n"
                 "  \"location_district_2\": string or null,\n"
@@ -41,7 +43,7 @@ class GeminiService:
                 "}\n\n"
                 "Use WEATHER intent when the query asks about current or forecasted atmospheric conditions "
                 "(temperature, humidity, wind speed, weather condition, rain forecast, feels like, etc.). "
-                "Use RAINFALL only when the query asks about historical/official recorded rainfall data.\n\n"
+                "Use DOMAIN_KNOWLEDGE when the user asks conceptual questions about INGRES, GEC methodology, assessment categories, formulas, or how to use the chatbot.\n\n"
                 f"Query: \"{query}\""
             )
             
@@ -73,40 +75,33 @@ class GeminiService:
         
         try:
             system_instruction = (
-                "You are INGRES AI, a virtual assistant for India's groundwater resource information. "
-                "Answer user queries in a simple and understandable language. "
-                "You MUST adhere strictly to the following scientific and formatting rules:\n"
-                "1. Use ONLY the verified data supplied in the context. Never invent or assume numerical values.\n"
-                "2. Groundwater level represents either Depth to Water Level (measured in 'm bgl') or Groundwater Level Indicator (measured in '%'). "
-                "If the user asks for the groundwater level (or level percentage / indicator), you should display the percentage value (e.g., 'The groundwater level in Ananthapuramu is 84.4%'). "
+                "You are IN-GRES AI, the official virtual assistant for India's Ground Water Resource Estimation System (INGRES / Indian Ground Water Resource Estimation System). "
+                "INGRES was developed by the Central Ground Water Board (CGWB), Ministry of Jal Shakti, Government of India, in collaboration with IIT Hyderabad. "
+                "Answer user queries in a simple, structured, and understandable language with markdown formatting.\n\n"
+                "### SCIENTIFIC AND DOMAIN KNOWLEDGE RULES:\n"
+                "1. If the user asks conceptual or general domain questions (e.g., 'What is INGRES?', 'How to use chatbot?', 'What is GEC methodology?', 'What do Safe/Critical categories mean?', 'What is Stage of Extraction?', 'What are artificial recharge structures?', 'What is ham?'), answer comprehensively using official CGWB / Ministry of Jal Shakti guidelines.\n"
+                "2. When district-specific data is provided in Verified Data: Use ONLY the verified data supplied in the context. Never invent or assume numerical values.\n"
+                "3. Groundwater level represents either Depth to Water Level (measured in 'm bgl') or Groundwater Level Indicator (measured in '%'). "
+                "If the user asks for the groundwater level (or level percentage / indicator), display the percentage value. "
                 "Keep depth to water level in 'm bgl' and level indicator in '%' distinct, and answer exactly what was requested.\n"
-                "3. Describe depth comparisons neutrally: do NOT call a deeper water table automatically 'better' or 'worse'. "
-                "Use terms like 'deeper' or 'shallower' (e.g., 'District B has a reported depth of X m bgl, which is Y m deeper than District A').\n"
-                "4. Stage of groundwater extraction is a percentage (%). Calculate it dynamically as (extraction / extractable) * 100.\n"
-                "5. Volumetric resources (recharge, extraction, availability) are in hectare-meters ('ham'). Rainfall is in millimeters ('mm').\n"
-                "6. If any data field is null, None, or missing, clearly state that 'Data unavailable' for that metric. Do not convert null to zero.\n"
-                "7. Preserve and mention the source years and periods if provided. Do not replace assessment year with the current year.\n"
-                "8. Respond in simple markdown format.\n"
-                "9. If the user asks for suggestions, recommendations, or how to increase, improve, conserve, or recharge groundwater:\n"
+                "4. Describe depth comparisons neutrally: do NOT call a deeper water table automatically 'better' or 'worse'. Use terms like 'deeper' or 'shallower'.\n"
+                "5. Stage of groundwater extraction is a percentage (%). Formula: (Gross Annual Extraction / Annual Extractable Resource) * 100.\n"
+                "6. Volumetric resources (recharge, extraction, availability) are in hectare-meters ('ham', where 1 ham = 10,000 m³ = 10 million liters). Rainfall is in millimeters ('mm').\n"
+                "7. Assessment Categories: Safe (<=70%), Semi-Critical (70-90%), Critical (90-100%), Over-Exploited (>100%), Saline.\n"
+                "8. If any data field is null, None, or missing, clearly state that 'Data unavailable' for that metric. Do not convert null to zero.\n"
+                "9. Preserve and mention the source years and periods if provided. Do not replace assessment year with the current year.\n"
+                "10. If the user asks for suggestions, recommendations, or how to increase, improve, conserve, or recharge groundwater:\n"
                 "   a. If the question is district-specific (e.g. Kadapa), structure the response with exactly these four headers:\n"
                 "      ### Current Situation\n"
-                "      (official groundwater details from the verified data)\n"
                 "      ### Possible Causes\n"
-                "      (explain likely causes based on the data, e.g., high extraction or low rainfall, clearly labeled as possible factors)\n"
                 "      ### Recommended Actions\n"
-                "      (practical conservation/recharge actions suitable for the district's condition)\n"
                 "      ### Monitoring\n"
-                "      (suggest monitoring groundwater levels and rainfall over time)\n"
-                "   b. If the question is general or location-specific data is unavailable, provide general practical suggestions (such as rainwater harvesting, check dams, recharge wells, drip irrigation, crop selection) and explicitly state that the recommendations are general.\n"
-                "10. Weather questions (current weather, temperature, humidity, wind speed, forecast, etc.) are IN-SCOPE. "
-                "If the user asks about current or forecasted weather for an Indian district, acknowledge that live weather data is fetched from Open-Meteo and guide them to specify a district name (e.g. 'What is the weather in Guntur?'). "
-                "If the query is completely unrelated to groundwater, water, rainfall, weather, recharge, extraction, or conservation, respond with exactly: "
+                "   b. If general, provide practical methods (check dams, percolation tanks, recharge shafts, drip irrigation, crop diversification) and explicitly state that recommendations are general.\n"
+                "11. Weather questions (temperature, humidity, forecast, etc.) are IN-SCOPE via Open-Meteo live weather.\n"
+                "12. If the query is completely unrelated to groundwater, water, rainfall, weather, recharge, extraction, or conservation, respond with exactly: "
                 "'This question is outside the scope of IN-GRES AI. I can help with groundwater levels, groundwater resources, rainfall, recharge, extraction, GWRA assessments, groundwater conservation, current weather conditions, and related topics.'\n"
-                "11. DO NOT return the current GWRA recharge value as a future prediction/forecast. If the user asks for future predictions, next year's recharge, or 2 years recharge forecast, explicitly state: 'Future groundwater recharge cannot be reliably predicted from the current GWRA dataset alone. The available [recharge_value] ham is the assessed annual recharge value, not a two-year forecast.' If a forecasting model is requested or implemented, label it 'AI/Model Forecast' and never 'Official CGWB Forecast'.\n"
-                "12. Every numerical value must carry its own temporal metadata. GWRA Assessment Year (e.g. 2025) and Groundwater Observation Year (e.g. 2026) are different and must be displayed separately.\n"
-                "13. Look up the official category and extraction percentage directly from the database record. NEVER infer or overwrite the official assessment category using custom rules (e.g. do not classify a district as 'Safe' or 'Over-Exploited' based on extraction percentage alone).\n"
-                "14. Do NOT call a monthly rainfall value 'annual rainfall'. If the period_type (or period) is 'monthly', label and display the rainfall as 'Rainfall: [value] mm' and 'Period: Monthly, [year]'.\n"
-                "15. Keep responses extremely concise. If the user asks a direct question about a specific metric in a single district, answer ONLY that requested value in a single short sentence."
+                "13. DO NOT return the current GWRA recharge value as a future prediction/forecast. If asked about future forecasts, state: 'Future groundwater recharge cannot be reliably predicted from the current GWRA dataset alone. The available [recharge_value] ham is the assessed annual recharge value, not a two-year forecast.'\n"
+                "14. Keep single-metric district answers concise."
             )
             
             model = genai.GenerativeModel(
@@ -116,7 +111,7 @@ class GeminiService:
             )
             
             prompt = (
-                f"System Prompt: Use only the following verified data to answer the user's question. "
+                f"System Prompt: Use only the verified data and domain knowledge to answer the user's question. "
                 f"If the data is missing, null, or empty, state that the data is unavailable. Do not make up any values.\n\n"
                 f"Verified Data: {verified_data}\n\n"
                 f"User Question: {query}"
@@ -167,21 +162,22 @@ class GeminiService:
     @staticmethod
     def _generate_fallback_response(query: str, verified_data: dict) -> str:
         """
-        Guaranteed non-hallucinated fallback response formatting verified DB values.
+        Guaranteed non-hallucinated fallback response formatting verified DB values and domain knowledge.
         """
         query_lower = query.lower().strip()
         
-        # Check for greeting or introductory question
+        # 1. Check domain knowledge base first for conceptual/FAQ queries
+        domain_match = resolve_domain_knowledge(query)
+        if domain_match:
+            return domain_match["response"]
+        
+        # 2. Check for pure greeting or pleasantry
         import re
         q_clean = re.sub(r'[^\w\s]', '', query_lower).strip()
         greeting_pattern = r'^(h+i+|h+e+y+|hello+|namaste|vanakkam|hola|greetings|good\s+(morning|afternoon|evening|day)|sup|yo)(\s+.*)?$'
-        intro_phrases = {
-            "who are you", "what are you", "what can you do", "what is ingres", "what is this",
-            "what is in-gres", "what is ingres ai", "how can you help", "how to use",
-            "help", "help me", "tell me about yourself", "introduce yourself",
-            "what do you do", "menu", "start", "capabilities", "how are you", "how r u"
-        }
-        if re.match(greeting_pattern, q_clean) or q_clean in intro_phrases or any(q_clean.startswith(p) for p in intro_phrases):
+        pure_greetings = {"hi", "hey", "hello", "namaste", "vanakkam", "greetings", "good morning", "good afternoon", "good evening"}
+        
+        if re.match(greeting_pattern, q_clean) or q_clean in pure_greetings:
             return (
                 "Hello! 👋 I am the **IN-GRES AI Assistant** for India's Ground Water Resource Estimation System.\n\n"
                 "I can help you explore official groundwater datasets, assessments, and weather:\n\n"
@@ -204,7 +200,7 @@ class GeminiService:
             "mandal", "mandals", "village", "villages", "state", "states", "compare", "conservation",
             "harvesting", "pit", "pits", "dam", "dams", "tank", "tanks", "pond", "ponds", "trench", "trenches",
             "watershed", "drip", "sprinkler", "ambedkar", "konaseema", "ysr", "kadapa", "guntur", "ananthapuramu",
-            "kurnool", "theni", "nilgiris"
+            "kurnool", "theni", "nilgiris", "ingres", "in-gres", "gec", "methodology", "ham", "mbgl", "m bgl", "indicator"
         }
         # Weather keywords are also in-scope for IN-GRES AI
         weather_keywords = {

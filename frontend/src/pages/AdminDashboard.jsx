@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import MarkdownRenderer from '../utils/MarkdownRenderer';
 import '../styles/main.css';
 
 const AdminDashboard = () => {
@@ -20,6 +21,7 @@ const AdminDashboard = () => {
   // Tab 1: Overview & Telemetry Data
   const [stats, setStats] = useState(null);
   const [queryLogs, setQueryLogs] = useState([]);
+  const [querySearch, setQuerySearch] = useState('');
   const [accessStats, setAccessStats] = useState([]);
 
   // Tab 2: User Management Data
@@ -29,6 +31,12 @@ const AdminDashboard = () => {
   const [newPassword, setNewPassword] = useState('');
   const [deleteModalUser, setDeleteModalUser] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // User History & Query Control Modals
+  const [userHistoryModal, setUserHistoryModal] = useState(null); // { user, queries: [], loading: boolean, search: '' }
+  const [selectedQueryDetail, setSelectedQueryDetail] = useState(null); // Query log object
+  const [clearUserHistoryModal, setClearUserHistoryModal] = useState(null); // User object
+  const [clearAllConfirmModal, setClearAllConfirmModal] = useState(false);
 
   // Tab 3: Data Editor Data
   const [dataRecords, setDataRecords] = useState([]);
@@ -41,6 +49,7 @@ const AdminDashboard = () => {
   const [editingRecord, setEditingRecord] = useState(null);
   const [editFormData, setEditFormData] = useState({});
   const [dataLoading, setDataLoading] = useState(false);
+
 
   const showToast = (text, type = 'success') => {
     setToastMessage({ text, type });
@@ -182,6 +191,94 @@ const AdminDashboard = () => {
       setActionLoading(false);
     }
   };
+
+  // ─── User History & Query Controls ──────────────────────────────
+  const handleOpenUserHistory = async (targetUser) => {
+    setUserHistoryModal({ user: targetUser, queries: [], loading: true, search: '' });
+    try {
+      const res = await api.get(`/api/admin/users/${targetUser.id}/history`);
+      setUserHistoryModal({ user: targetUser, queries: res.data, loading: false, search: '' });
+    } catch (err) {
+      console.error("Failed to load user query history", err);
+      showToast("Unable to fetch user query history.", "danger");
+      setUserHistoryModal(prev => prev ? { ...prev, loading: false } : null);
+    }
+  };
+
+  const handleDeleteQuery = async (queryId, isFromUserModal = false) => {
+    if (!window.confirm(`Delete query log #${queryId}?`)) return;
+    try {
+      await api.delete(`/api/admin/queries/${queryId}`);
+      // Remove from main queryLogs
+      setQueryLogs(prev => prev.filter(q => q.id !== queryId));
+      // Update stats
+      setStats(prev => prev ? { ...prev, total_queries: Math.max(0, prev.total_queries - 1) } : prev);
+
+      if (isFromUserModal && userHistoryModal) {
+        setUserHistoryModal(prev => ({
+          ...prev,
+          queries: prev.queries.filter(q => q.id !== queryId)
+        }));
+        // Decrement queries_count for that user in userLogs
+        setUserLogs(prev => prev.map(u => u.id === userHistoryModal.user.id ? { ...u, queries_count: Math.max(0, u.queries_count - 1) } : u));
+      }
+
+      if (selectedQueryDetail?.id === queryId) {
+        setSelectedQueryDetail(null);
+      }
+
+      showToast(`Query log #${queryId} deleted successfully.`);
+    } catch (err) {
+      console.error("Failed to delete query", err);
+      showToast("Failed to delete query log.", "danger");
+    }
+  };
+
+  const handleClearUserHistory = async (userId) => {
+    try {
+      setActionLoading(true);
+      const res = await api.delete(`/api/admin/users/${userId}/history`);
+      // Update user count
+      setUserLogs(prev => prev.map(u => u.id === userId ? { ...u, queries_count: 0 } : u));
+      // Remove those queries from main list
+      setQueryLogs(prev => prev.filter(q => q.email !== clearUserHistoryModal?.email));
+      // Refresh overview stats
+      fetchOverviewData();
+
+      if (userHistoryModal?.user?.id === userId) {
+        setUserHistoryModal(prev => ({ ...prev, queries: [] }));
+      }
+
+      showToast(res.data.message || "User history cleared successfully.");
+      setClearUserHistoryModal(null);
+      setActionLoading(false);
+    } catch (err) {
+      console.error("Failed to clear user history", err);
+      showToast("Failed to clear user history.", "danger");
+      setActionLoading(false);
+    }
+  };
+
+  const handleClearAllQueries = async () => {
+    try {
+      setActionLoading(true);
+      const res = await api.delete('/api/admin/queries/clear-all');
+      setQueryLogs([]);
+      setUserLogs(prev => prev.map(u => ({ ...u, queries_count: 0 })));
+      setStats(prev => prev ? { ...prev, total_queries: 0 } : prev);
+      if (userHistoryModal) {
+        setUserHistoryModal(prev => ({ ...prev, queries: [] }));
+      }
+      showToast(res.data.message || "All query logs purged successfully.");
+      setClearAllConfirmModal(false);
+      setActionLoading(false);
+    } catch (err) {
+      console.error("Failed to clear all queries", err);
+      showToast("Failed to purge query logs.", "danger");
+      setActionLoading(false);
+    }
+  };
+
 
   // Data Editor: Open Edit Modal
   const handleOpenEdit = (rec) => {
@@ -411,11 +508,35 @@ const AdminDashboard = () => {
 
           {/* Global AI Query Activity Log */}
           <section className="card">
-            <h3 className="card-title">📜 Real-Time Virtual Assistant Query Log</h3>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '15px' }}>
-              Recent queries answered by Google Gemini AI with database grounding.
-            </p>
-            <div className="table-wrapper" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '15px' }}>
+              <div>
+                <h3 className="card-title" style={{ margin: 0 }}>📜 Real-Time Virtual Assistant Query Log</h3>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '4px', margin: 0 }}>
+                  Recent queries answered by IN-GRES AI. Inspect responses, delete individual queries, or clear all logs.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Filter queries by text, user, district..."
+                  value={querySearch}
+                  onChange={(e) => setQuerySearch(e.target.value)}
+                  style={{ maxWidth: '260px', padding: '6px 12px', fontSize: '0.85rem' }}
+                />
+                <button
+                  className="btn btn-sm btn-danger"
+                  onClick={() => setClearAllConfirmModal(true)}
+                  disabled={queryLogs.length === 0 || actionLoading}
+                  title="Purge all query logs system-wide"
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  🗑️ Clear All Logs
+                </button>
+              </div>
+            </div>
+
+            <div className="table-wrapper" style={{ maxHeight: '380px', overflowY: 'auto' }}>
               <table className="data-table">
                 <thead>
                   <tr>
@@ -423,30 +544,63 @@ const AdminDashboard = () => {
                     <th>User</th>
                     <th>Question Asked</th>
                     <th>District</th>
+                    <th style={{ textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {queryLogs.map((q) => (
-                    <tr key={q.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>{getFormatDate(q.created_at)}</td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{q.username}</div>
-                        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{q.email}</span>
-                      </td>
-                      <td>
-                        <div style={{ maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={q.query}>
-                          {q.query}
-                        </div>
-                      </td>
-                      <td>
-                        {q.district_name !== 'N/A' ? (
-                          <span className="badge badge-safe">{q.district_name}</span>
-                        ) : (
-                          <span style={{ color: 'var(--text-muted)' }}>General</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {queryLogs
+                    .filter(q => {
+                      if (!querySearch.trim()) return true;
+                      const s = querySearch.toLowerCase();
+                      return (
+                        q.query?.toLowerCase().includes(s) ||
+                        q.response?.toLowerCase().includes(s) ||
+                        q.username?.toLowerCase().includes(s) ||
+                        q.email?.toLowerCase().includes(s) ||
+                        q.district_name?.toLowerCase().includes(s)
+                      );
+                    })
+                    .map((q) => (
+                      <tr key={q.id}>
+                        <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{getFormatDate(q.created_at)}</td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{q.username}</div>
+                          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{q.email}</span>
+                        </td>
+                        <td>
+                          <div style={{ maxWidth: '340px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={q.query}>
+                            {q.query}
+                          </div>
+                        </td>
+                        <td>
+                          {q.district_name !== 'N/A' ? (
+                            <span className="badge badge-safe">{q.district_name}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>General</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          <div className="action-btns" style={{ justifyContent: 'center', gap: '6px' }}>
+                            <button
+                              className="btn btn-sm btn-outline"
+                              onClick={() => setSelectedQueryDetail(q)}
+                              title="View full prompt & response"
+                              style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                            >
+                              👁️ View
+                            </button>
+                            <button
+                              className="btn btn-sm btn-danger"
+                              onClick={() => handleDeleteQuery(q.id)}
+                              title="Delete this query log entry"
+                              style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -463,7 +617,7 @@ const AdminDashboard = () => {
             <div>
               <h3 className="card-title">👥 User Account Directory & Permissions</h3>
               <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Manage roles, reset user passwords, and remove accounts directly.
+                Manage roles, inspect/clear user query history, reset passwords, and delete accounts.
               </p>
             </div>
             <input 
@@ -477,7 +631,7 @@ const AdminDashboard = () => {
           </div>
 
           <div className="table-wrapper">
-            <table className="data-table" style={{ minWidth: '760px' }}>
+            <table className="data-table" style={{ minWidth: '820px' }}>
               <thead>
                 <tr>
                   <th>User ID</th>
@@ -512,18 +666,42 @@ const AdminDashboard = () => {
                           {u.role}
                         </span>
                       </td>
-                      <td>{u.queries_count}</td>
+                      <td>
+                        <span style={{ fontWeight: 600 }}>{u.queries_count}</span>
+                      </td>
                       <td>{new Date(u.created_at).toLocaleDateString()}</td>
                       <td style={{ textAlign: 'center' }}>
                         <div className="action-btns" style={{ justifyContent: 'center', flexWrap: 'nowrap', gap: '6px' }}>
+                          {/* View & Manage User History */}
+                          <button 
+                            className="btn btn-sm btn-primary"
+                            onClick={() => handleOpenUserHistory(u)}
+                            title={`Inspect and manage ${u.name}'s query history`}
+                            style={{ padding: '4px 10px', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <span>📜</span> History ({u.queries_count})
+                          </button>
+
+                          {/* Clear User History */}
+                          <button 
+                            className="btn btn-sm btn-outline"
+                            onClick={() => setClearUserHistoryModal(u)}
+                            disabled={u.queries_count === 0 || actionLoading}
+                            title={`Purge all queries for ${u.name}`}
+                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                          >
+                            🗑️ Clear
+                          </button>
+
                           {/* Role Toggle Button */}
                           <button 
                             className={`btn btn-sm ${u.role === 'ADMIN' ? 'btn-outline' : 'btn-warning'}`}
                             onClick={() => handleRoleToggle(u)}
                             disabled={isCurrent || actionLoading}
                             title={isCurrent ? "Cannot demote yourself" : (u.role === 'ADMIN' ? "Demote to Standard User" : "Promote to Admin")}
+                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
                           >
-                            {u.role === 'ADMIN' ? 'Demote User' : '👑 Make Admin'}
+                            {u.role === 'ADMIN' ? 'Demote' : '👑 Admin'}
                           </button>
 
                           {/* Reset Password Button */}
@@ -532,8 +710,9 @@ const AdminDashboard = () => {
                             onClick={() => { setResetModalUser(u); setNewPassword(''); }}
                             disabled={actionLoading}
                             title="Reset password for this user"
+                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
                           >
-                            🔑 Reset Pwd
+                            🔑 Reset
                           </button>
 
                           {/* Delete User Button */}
@@ -542,8 +721,9 @@ const AdminDashboard = () => {
                             onClick={() => setDeleteModalUser(u)}
                             disabled={isCurrent || actionLoading}
                             title={isCurrent ? "Cannot delete yourself" : "Delete account"}
+                            style={{ padding: '4px 8px', fontSize: '0.8rem' }}
                           >
-                            🗑️ Delete
+                            🗑️
                           </button>
                         </div>
                       </td>
@@ -551,6 +731,7 @@ const AdminDashboard = () => {
                   );
                 })}
               </tbody>
+
             </table>
           </div>
         </div>
@@ -884,15 +1065,262 @@ const AdminDashboard = () => {
                   />
                 </div>
               </div>
+
               <div className="admin-modal-footer">
                 <button type="button" className="btn btn-outline" onClick={() => setEditingRecord(null)}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={actionLoading}>
-                  {actionLoading ? 'Saving Changes...' : 'Save Groundwater Record 💾'}
+                  {actionLoading ? 'Saving Changes...' : '💾 Save Record Changes'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL 4: USER QUERY HISTORY MODAL
+          ===================================================================== */}
+      {userHistoryModal && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-container modal-lg" style={{ maxWidth: '920px', maxHeight: '90vh' }}>
+            <div className="admin-modal-header">
+              <div>
+                <h3 className="admin-modal-title">
+                  📜 Query History: {userHistoryModal.user?.name}
+                </h3>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  {userHistoryModal.user?.email} • Total Logged Queries: <strong>{userHistoryModal.queries.length}</strong>
+                </span>
+              </div>
+              <button className="admin-modal-close" onClick={() => setUserHistoryModal(null)}>×</button>
+            </div>
+
+            <div className="admin-modal-body" style={{ maxHeight: 'calc(90vh - 170px)', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Filter queries asked by this user..."
+                  value={userHistoryModal.search || ''}
+                  onChange={(e) => setUserHistoryModal(prev => ({ ...prev, search: e.target.value }))}
+                  style={{ maxWidth: '340px', padding: '8px 12px' }}
+                />
+                {userHistoryModal.queries.length > 0 && (
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => setClearUserHistoryModal(userHistoryModal.user)}
+                    disabled={actionLoading}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <span>🗑️</span> Purge All User History ({userHistoryModal.queries.length})
+                  </button>
+                )}
+              </div>
+
+              {userHistoryModal.loading ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  Loading query logs...
+                </div>
+              ) : userHistoryModal.queries.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-icon">📜</div>
+                  <p>No logged queries found for this user.</p>
+                </div>
+              ) : (
+                <div className="table-wrapper">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Question Asked</th>
+                        <th>District Context</th>
+                        <th style={{ textAlign: 'center' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {userHistoryModal.queries
+                        .filter(q => {
+                          if (!userHistoryModal.search?.trim()) return true;
+                          const s = userHistoryModal.search.toLowerCase();
+                          return q.query?.toLowerCase().includes(s) || q.response?.toLowerCase().includes(s) || q.district_name?.toLowerCase().includes(s);
+                        })
+                        .map(q => (
+                          <tr key={q.id}>
+                            <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>{getFormatDate(q.created_at)}</td>
+                            <td>
+                              <div style={{ maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }} title={q.query}>
+                                {q.query}
+                              </div>
+                            </td>
+                            <td>
+                              {q.district_name !== 'N/A' ? (
+                                <span className="badge badge-safe">{q.district_name}</span>
+                              ) : (
+                                <span style={{ color: 'var(--text-muted)' }}>General</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                              <div className="action-btns" style={{ justifyContent: 'center', gap: '6px' }}>
+                                <button
+                                  className="btn btn-sm btn-outline"
+                                  onClick={() => setSelectedQueryDetail(q)}
+                                  style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                                  title="Inspect full query prompt and AI answer"
+                                >
+                                  👁️ View
+                                </button>
+                                <button
+                                  className="btn btn-sm btn-danger"
+                                  onClick={() => handleDeleteQuery(q.id, true)}
+                                  style={{ padding: '4px 8px', fontSize: '0.78rem' }}
+                                  title="Delete this query record"
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="admin-modal-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setUserHistoryModal(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL 5: QUERY & AI RESPONSE DETAIL VIEWER
+          ===================================================================== */}
+      {selectedQueryDetail && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-container modal-lg" style={{ maxWidth: '850px', maxHeight: '90vh' }}>
+            <div className="admin-modal-header">
+              <div>
+                <h3 className="admin-modal-title">👁️ Query & AI Response Details</h3>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  User: <strong>{selectedQueryDetail.username}</strong> ({selectedQueryDetail.email}) • Log #{selectedQueryDetail.id}
+                </span>
+              </div>
+              <button className="admin-modal-close" onClick={() => setSelectedQueryDetail(null)}>×</button>
+            </div>
+
+            <div className="admin-modal-body" style={{ maxHeight: 'calc(90vh - 170px)', overflowY: 'auto' }}>
+              <div style={{ marginBottom: '16px', padding: '14px', background: 'var(--surface-secondary)', borderRadius: 'var(--border-radius-sm)', borderLeft: '4px solid var(--primary-color)' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  User Question • {getFormatDate(selectedQueryDetail.created_at)} {selectedQueryDetail.district_name !== 'N/A' && `• District: ${selectedQueryDetail.district_name}`}
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                  {selectedQueryDetail.query}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  🤖 Virtual Assistant Response
+                </div>
+                <div style={{ padding: '16px', background: 'var(--surface-color)', border: '1px solid var(--border-color)', borderRadius: 'var(--border-radius-sm)', fontSize: '0.92rem', lineHeight: '1.6' }}>
+                  <MarkdownRenderer text={selectedQueryDetail.response} />
+                </div>
+              </div>
+            </div>
+
+            <div className="admin-modal-footer" style={{ justifyContent: 'space-between' }}>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => handleDeleteQuery(selectedQueryDetail.id, userHistoryModal !== null)}
+              >
+                🗑️ Delete This Query Log
+              </button>
+              <button type="button" className="btn btn-outline" onClick={() => setSelectedQueryDetail(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL 6: CLEAR USER HISTORY CONFIRMATION
+          ===================================================================== */}
+      {clearUserHistoryModal && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-container">
+            <div className="admin-modal-header">
+              <h3 className="admin-modal-title" style={{ color: '#dc2626' }}>🗑️ Clear User Query History</h3>
+              <button className="admin-modal-close" onClick={() => setClearUserHistoryModal(null)}>×</button>
+            </div>
+            <div className="admin-modal-body">
+              <p style={{ fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '10px' }}>
+                Are you sure you want to permanently delete all query logs and assistant chat conversations for:
+              </p>
+              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '12px 16px', borderRadius: '6px', marginBottom: '15px' }}>
+                <div><strong>User:</strong> {clearUserHistoryModal.name}</div>
+                <div><strong>Email:</strong> {clearUserHistoryModal.email}</div>
+                <div><strong>Logged Queries:</strong> {clearUserHistoryModal.queries_count ?? 'All'}</div>
+              </div>
+              <p style={{ fontSize: '0.85rem', color: '#991b1b' }}>
+                ⚠️ Warning: This will wipe out all past query history and active conversation sessions for this user.
+              </p>
+            </div>
+            <div className="admin-modal-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setClearUserHistoryModal(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => handleClearUserHistory(clearUserHistoryModal.id)}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Clearing...' : 'Clear User History'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          MODAL 7: CLEAR ALL QUERY LOGS SYSTEM-WIDE
+          ===================================================================== */}
+      {clearAllConfirmModal && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal-container">
+            <div className="admin-modal-header">
+              <h3 className="admin-modal-title" style={{ color: '#dc2626' }}>⚠️ Purge All System Query Logs</h3>
+              <button className="admin-modal-close" onClick={() => setClearAllConfirmModal(false)}>×</button>
+            </div>
+            <div className="admin-modal-body">
+              <p style={{ fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '10px' }}>
+                Are you sure you want to permanently delete <strong>ALL ({queryLogs.length}) query logs</strong> across the entire system?
+              </p>
+              <p style={{ fontSize: '0.85rem', color: '#991b1b' }}>
+                ⚠️ Warning: This action is irreversible and will delete all user query activity logs from the database.
+              </p>
+            </div>
+            <div className="admin-modal-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setClearAllConfirmModal(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={handleClearAllQueries}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Purging...' : 'Purge All Query Logs'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -901,3 +1329,4 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
+

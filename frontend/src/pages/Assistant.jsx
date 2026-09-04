@@ -7,13 +7,19 @@ import '../styles/main.css';
 import '../styles/chat.css';
 
 const SUGGESTED_QUESTIONS = [
+  "Predict future water level in Kadapa",
+  "Predict groundwater levels in Kurnool for next 5 years",
+  "What is INGRES?",
+  "How to use chatbot properly?",
+  "What do Safe, Semi-Critical, and Over-Exploited mean?",
+  "What is the formula for stage of extraction?",
+  "What are artificial recharge structures?",
   "What is the groundwater level in Ananthapuramu?",
-  "Compare groundwater levels in Ananthapuramu and Kurnool.",
-  "Which district has the highest groundwater level?",
-  "What was the rainfall percentage in Ananthapuramu?",
-  "Show groundwater statistics for Andhra Pradesh.",
-  "Which districts have low groundwater availability?"
+  "Compare groundwater in Kadapa and Kurnool.",
+  "Which district has the lowest groundwater level?",
+  "Current weather in Guntur"
 ];
+
 
 const Assistant = () => {
   const [query, setQuery] = useState('');

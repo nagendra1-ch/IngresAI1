@@ -84,9 +84,21 @@ const DistrictDetails = () => {
 
   return (
     <div className="container-inner">
-      <button className="btn btn-outline" onClick={() => navigate('/districts')} style={{ marginBottom: '20px' }}>
-        ← Back to Districts
-      </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
+        <button className="btn btn-outline" onClick={() => navigate('/districts')}>
+          ← Back to Districts
+        </button>
+        {district && (
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate(`/forecast?district=${encodeURIComponent(district.district_name)}&tab=prediction`)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <span>🔮</span> Predict Future Water Levels
+          </button>
+        )}
+      </div>
+
 
       <header className="page-header" style={{ alignItems: 'flex-start' }}>
         <div>

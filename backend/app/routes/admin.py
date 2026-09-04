@@ -169,16 +169,131 @@ def delete_user(
 
     return {"message": f"User {user_email} deleted successfully."}
 
-@router.get("/queries", response_model=List[AdminQueryLog])
-def get_admin_queries(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+@router.get("/users/{user_id}/history", response_model=List[AdminQueryLog])
+def get_user_query_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
     """
-    Lists query records with joinedload. Requires ADMIN.
+    Retrieve the entire query history of a specific user. Requires ADMIN.
     """
+    target_user = db.query(User).filter_by(id=user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     queries = db.query(QueryHistory).options(
         joinedload(QueryHistory.user),
         joinedload(QueryHistory.geography)
-    ).order_by(QueryHistory.created_at.desc()).limit(200).all()
-    
+    ).filter_by(user_id=user_id).order_by(QueryHistory.created_at.desc()).all()
+
+    out = []
+    for q in queries:
+        username = q.user.name if q.user else target_user.name
+        email = q.user.email if q.user else target_user.email
+        dist_name = q.geography.district_name if q.geography else "N/A"
+        out.append({
+            "id": q.id,
+            "username": username,
+            "email": email,
+            "query": q.query,
+            "response": q.response,
+            "district_name": dist_name,
+            "created_at": q.created_at
+        })
+    return out
+
+@router.delete("/users/{user_id}/history")
+def clear_user_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Purge all query logs and conversation sessions for a specific user. Requires ADMIN.
+    """
+    target_user = db.query(User).filter_by(id=user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        q_count = db.query(QueryHistory).filter_by(user_id=user_id).delete(synchronize_session=False)
+        convs = db.query(Conversation).filter_by(user_id=user_id).all()
+        for conv in convs:
+            db.query(ConversationMessage).filter_by(conversation_id=conv.conversation_id).delete(synchronize_session=False)
+            db.delete(conv)
+        db.commit()
+        return {"message": f"Successfully cleared {q_count} query logs and conversations for {target_user.email}."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear user history: {str(e)}")
+
+@router.delete("/queries/clear-all")
+def clear_all_queries(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Bulk purge all system-wide query history logs. Requires ADMIN.
+    """
+    try:
+        deleted_count = db.query(QueryHistory).delete(synchronize_session=False)
+        db.commit()
+        return {"message": f"Successfully purged all {deleted_count} query history logs."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to clear query logs: {str(e)}")
+
+@router.delete("/queries/{query_id}")
+def delete_admin_query(
+    query_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Delete a specific query history log by ID. Requires ADMIN.
+    """
+    query_rec = db.query(QueryHistory).filter_by(id=query_id).first()
+    if not query_rec:
+        raise HTTPException(status_code=404, detail="Query record not found")
+
+    db.delete(query_rec)
+    db.commit()
+    return {"message": f"Query log #{query_id} has been deleted successfully."}
+
+@router.get("/queries", response_model=List[AdminQueryLog])
+def get_admin_queries(
+    search: Optional[str] = Query(None, description="Search query, email, or district"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    limit: int = Query(250, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Lists query records with joinedload and optional search. Requires ADMIN.
+    """
+    query = db.query(QueryHistory).options(
+        joinedload(QueryHistory.user),
+        joinedload(QueryHistory.geography)
+    )
+
+    if user_id:
+        query = query.filter(QueryHistory.user_id == user_id)
+
+    if search and search.strip():
+        s = f"%{search.strip()}%"
+        query = query.outerjoin(User, QueryHistory.user_id == User.id)\
+                     .outerjoin(Geography, QueryHistory.geography_id == Geography.id)\
+                     .filter(or_(
+                         QueryHistory.query.ilike(s),
+                         QueryHistory.response.ilike(s),
+                         User.name.ilike(s),
+                         User.email.ilike(s),
+                         Geography.district_name.ilike(s)
+                     ))
+
+    queries = query.order_by(QueryHistory.created_at.desc()).limit(limit).all()
+
     out = []
     for q in queries:
         username = q.user.name if q.user else "Unknown"
@@ -194,6 +309,7 @@ def get_admin_queries(db: Session = Depends(get_db), current_user: User = Depend
             "created_at": q.created_at
         })
     return out
+
 
 @router.get("/access-statistics", response_model=List[DistrictAccessStat])
 def get_admin_access_statistics(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):

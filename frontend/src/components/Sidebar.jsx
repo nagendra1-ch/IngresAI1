@@ -83,9 +83,10 @@ const Sidebar = () => {
 
           <li className="sidebar-item">
             <NavLink to="/forecast" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`} onClick={closeSidebar}>
-              <span>🌧️</span> Forecast
+              <span>🔮</span> Forecast & Prediction
             </NavLink>
           </li>
+
 
           <li className="sidebar-item">
             <NavLink to="/history" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`} onClick={closeSidebar}>
