@@ -25,7 +25,6 @@ backend/ingres_ai.db
 ingres_ai.db
 ingres_ai_backup.db
 backend/scratch/
-states/
 
 # Node dependencies and build folders
 node_modules/
