@@ -18,9 +18,6 @@ from app.config import settings
 from app.database import engine, Base, init_db, SessionLocal
 import app.models
 
-# Initialize database schema and performance indexes on startup
-init_db()
-
 def _prewarm_caches():
     """Background worker to pre-populate database in-memory caches on startup."""
     try:
@@ -37,8 +34,11 @@ def _prewarm_caches():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Launch background cache priming thread
-    threading.Thread(target=_prewarm_caches, daemon=True).start()
+    is_serverless = os.environ.get("VERCEL") == "1" or os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None
+    if not is_serverless:
+        # Safe background init for long-running servers
+        threading.Thread(target=init_db, daemon=True).start()
+        threading.Thread(target=_prewarm_caches, daemon=True).start()
     yield
 
 # Import routers directly from route modules

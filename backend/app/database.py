@@ -1,6 +1,8 @@
+import os
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import NullPool
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -15,12 +17,16 @@ engine_kwargs = {}
 if db_url.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 else:
-    # Cloud PostgreSQL / Supabase connection pooling optimizations
-    engine_kwargs["pool_pre_ping"] = True
-    engine_kwargs["pool_recycle"] = 300
-    engine_kwargs["pool_size"] = 20
-    engine_kwargs["max_overflow"] = 10
-    engine_kwargs["pool_timeout"] = 15
+    # Check if running in serverless environment (e.g., Vercel / AWS Lambda)
+    is_serverless = os.environ.get("VERCEL") == "1" or os.environ.get("AWS_LAMBDA_FUNCTION_NAME") is not None
+    if is_serverless:
+        engine_kwargs["poolclass"] = NullPool
+    else:
+        engine_kwargs["pool_pre_ping"] = True
+        engine_kwargs["pool_recycle"] = 300
+        engine_kwargs["pool_size"] = 5
+        engine_kwargs["max_overflow"] = 5
+        engine_kwargs["pool_timeout"] = 10
 
 engine = create_engine(db_url, **engine_kwargs)
 
