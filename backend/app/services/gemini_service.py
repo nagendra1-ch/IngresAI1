@@ -171,33 +171,51 @@ class GeminiService:
         """
         query_lower = query.lower().strip()
         
-        # Check for unrelated query first
+        # Check for greeting or introductory question
+        import re
+        q_clean = re.sub(r'[^\w\s]', '', query_lower).strip()
+        greeting_pattern = r'^(h+i+|h+e+y+|hello+|namaste|vanakkam|hola|greetings|good\s+(morning|afternoon|evening|day)|sup|yo)(\s+.*)?$'
+        intro_phrases = {
+            "who are you", "what are you", "what can you do", "what is ingres", "what is this",
+            "what is in-gres", "what is ingres ai", "how can you help", "how to use",
+            "help", "help me", "tell me about yourself", "introduce yourself",
+            "what do you do", "menu", "start", "capabilities", "how are you", "how r u"
+        }
+        if re.match(greeting_pattern, q_clean) or q_clean in intro_phrases or any(q_clean.startswith(p) for p in intro_phrases):
+            return (
+                "Hello! 👋 I am the **IN-GRES AI Assistant** for India's Ground Water Resource Estimation System.\n\n"
+                "I can help you explore official groundwater datasets, assessments, and weather:\n\n"
+                "• **Groundwater Levels & Trends** — *'What is the water level in Kadapa?'*\n"
+                "• **GWRA Assessment Categories** — Safe, Semi-Critical, Critical, or Over-Exploited\n"
+                "• **Rainfall & Recharge Data** — Annual rainfall and assessed recharge metrics\n"
+                "• **Extraction & Availability** — Stage of extraction and net water availability\n"
+                "• **Conservation Strategies** — Practical recommendations for recharge and conservation\n"
+                "• **Live Weather Forecasts** — Current temperature and conditions for any district\n\n"
+                "How can I assist you today? Feel free to ask a question or name any district or state!"
+            )
+
+        # Check for unrelated query
         is_unrelated = True
-        greetings = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "help", "greet", "greetings"}
-        if query_lower in greetings or any(query_lower.startswith(g + " ") for g in greetings):
+        groundwater_keywords = {
+            "groundwater", "water", "rainfall", "rain", "recharge", "extraction", "stage", "gwra",
+            "aquifer", "borewell", "wells", "well", "cgwb", "infiltration", "conservation", "irrigation",
+            "crop", "crops", "depth", "level", "drought", "depletion", "monsoon", "precipitation",
+            "safe", "critical", "over-exploited", "semi-critical", "saline", "district", "districts",
+            "mandal", "mandals", "village", "villages", "state", "states", "compare", "conservation",
+            "harvesting", "pit", "pits", "dam", "dams", "tank", "tanks", "pond", "ponds", "trench", "trenches",
+            "watershed", "drip", "sprinkler", "ambedkar", "konaseema", "ysr", "kadapa", "guntur", "ananthapuramu",
+            "kurnool", "theni", "nilgiris"
+        }
+        # Weather keywords are also in-scope for IN-GRES AI
+        weather_keywords = {
+            "weather", "temperature", "humidity", "forecast", "raining", "wind", "windspeed",
+            "sunny", "cloudy", "storm", "thunderstorm", "drizzle", "heatwave", "haze",
+            "feels", "apparent", "condition", "hot", "cold", "cool", "warm", "climate"
+        }
+        words = re.findall(r'[a-z0-9]+', query_lower)
+        if any(w in groundwater_keywords for w in words) or any(w in weather_keywords for w in words):
             is_unrelated = False
-        else:
-            groundwater_keywords = {
-                "groundwater", "water", "rainfall", "rain", "recharge", "extraction", "stage", "gwra",
-                "aquifer", "borewell", "wells", "well", "cgwb", "infiltration", "conservation", "irrigation",
-                "crop", "crops", "depth", "level", "drought", "depletion", "monsoon", "precipitation",
-                "safe", "critical", "over-exploited", "semi-critical", "saline", "district", "districts",
-                "mandal", "mandals", "village", "villages", "state", "states", "compare", "conservation",
-                "harvesting", "pit", "pits", "dam", "dams", "tank", "tanks", "pond", "ponds", "trench", "trenches",
-                "watershed", "drip", "sprinkler", "ambedkar", "konaseema", "ysr", "kadapa", "guntur", "ananthapuramu",
-                "kurnool", "theni", "nilgiris"
-            }
-            # Weather keywords are also in-scope for IN-GRES AI
-            weather_keywords = {
-                "weather", "temperature", "humidity", "forecast", "raining", "wind", "windspeed",
-                "sunny", "cloudy", "storm", "thunderstorm", "drizzle", "heatwave", "haze",
-                "feels", "apparent", "condition", "hot", "cold", "cool", "warm", "climate"
-            }
-            import re
-            words = re.findall(r'[a-z0-9]+', query_lower)
-            if any(w in groundwater_keywords for w in words) or any(w in weather_keywords for w in words):
-                is_unrelated = False
-                
+            
         if is_unrelated:
             return "This question is outside the scope of IN-GRES AI. I can help with groundwater levels, groundwater resources, rainfall, recharge, extraction, GWRA assessments, groundwater conservation, current weather conditions, and related topics."
 

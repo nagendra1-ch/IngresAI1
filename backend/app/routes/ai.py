@@ -650,12 +650,33 @@ def generate_factual_response(details: dict) -> str:
         f"* Dataset: IN-GRES Groundwater Dataset\n"
     )
 
+def is_greeting_or_help_query(query: str) -> bool:
+    """Detects general greetings, pleasantries, and introductory questions."""
+    q = query.lower().strip()
+    q_clean = re.sub(r'[^\w\s]', '', q).strip()
+    
+    # Matches variations: hi, hii, hiii, hey, heyy, hello, namaste, vanakkam, hola, etc.
+    greeting_pattern = r'^(h+i+|h+e+y+|hello+|namaste|vanakkam|hola|greetings|good\s+(morning|afternoon|evening|day)|sup|yo)(\s+.*)?$'
+    if re.match(greeting_pattern, q_clean):
+        return True
+        
+    intro_phrases = {
+        "who are you", "what are you", "what can you do", "what is ingres", "what is this",
+        "what is in-gres", "what is ingres ai", "how can you help", "how to use",
+        "help", "help me", "tell me about yourself", "introduce yourself",
+        "what do you do", "menu", "start", "capabilities", "how are you", "how r u"
+    }
+    if q_clean in intro_phrases or any(q_clean.startswith(p) for p in intro_phrases):
+        return True
+        
+    return False
+
 def is_unrelated_query(query: str) -> bool:
-    query_lower = query.lower().strip()
-    # Greetings or basic greeting commands should not be marked as unrelated
-    greetings = {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "help", "greet", "greetings"}
-    if query_lower in greetings or any(query_lower.startswith(g + " ") for g in greetings):
+    # Greetings or introductory commands are fully in-scope
+    if is_greeting_or_help_query(query):
         return False
+
+    query_lower = query.lower().strip()
 
     # Weather queries are in-scope
     has_weather, _ = detect_weather_intent(query_lower)
@@ -1083,9 +1104,40 @@ def chat_with_assistant(
     db.add(user_msg)
     db.commit()
     
-    # 0. Check for unrelated query (but bypass if there is a pending clarification or active follow-up!)
-    is_clarifying = conv.pending_intent is not None and conv.pending_location is not None
-    is_followup = conv.current_intent is not None or conv.last_user_question is not None
+    # 0. Check for greetings or introductory questions
+    if is_greeting_or_help_query(query_text) and not is_clarifying and not is_followup:
+        response_text = (
+            "Hello! 👋 I am the **IN-GRES AI Assistant** for India's Ground Water Resource Estimation System.\n\n"
+            "I can help you explore official groundwater datasets, assessments, and weather:\n\n"
+            "• **Groundwater Levels & Trends** — *'What is the water level in Kadapa?'*\n"
+            "• **GWRA Assessment Categories** — Safe, Semi-Critical, Critical, or Over-Exploited\n"
+            "• **Rainfall & Recharge Data** — Annual rainfall and assessed recharge metrics\n"
+            "• **Extraction & Availability** — Stage of extraction and net water availability\n"
+            "• **Conservation Strategies** — Practical recommendations for recharge and conservation\n"
+            "• **Live Weather Forecasts** — Current temperature and conditions for any district\n\n"
+            "How can I assist you today? Feel free to ask a question or name any district or state!"
+        )
+        asst_msg = ConversationMessage(conversation_id=conv_id, sender="assistant", text=response_text)
+        db.add(asst_msg)
+        db.commit()
+        save_query_history(db, current_user.id, query_text, response_text, None)
+        return {
+            "query": query_text,
+            "response": response_text,
+            "conversation_id": conv_id,
+            "location": None,
+            "assessment": None,
+            "groundwater": None,
+            "rainfall": None,
+            "resources": None,
+            "sources": ["IN-GRES Assistant Guide"],
+            "conversation_context": {
+                "location_resolved": False,
+                "intent_resolved": True
+            }
+        }
+
+    # 1. Check for unrelated query (but bypass if there is a pending clarification or active follow-up!)
     if is_unrelated_query(query_text) and not is_clarifying and not is_followup:
         response_text = "This question is outside the scope of IN-GRES AI. I can help with groundwater levels, groundwater resources, rainfall, recharge, extraction, GWRA assessments, groundwater conservation, and related topics."
         
