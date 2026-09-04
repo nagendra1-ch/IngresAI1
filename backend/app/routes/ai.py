@@ -1741,10 +1741,22 @@ def chat_with_assistant(
             if conv.current_intent == "GROUNDWATER_LEVEL":
                 indicator = details["groundwater"]["groundwater_level_indicator_percent"]
                 depth = details["groundwater"]["depth_to_water_level_m_bgl"]
-                if any(x in query_lower for x in ["percent", "percentage", "indicator"]) or not any(x in query_lower for x in ["depth", "mbgl", "m bgl"]):
-                    response_text = f"The groundwater level in {name} is {indicator:.2f}%." if indicator is not None else f"Groundwater level data is unavailable for {name}."
+                if any(x in query_lower for x in ["percent", "percentage", "indicator"]):
+                    if indicator is not None:
+                        response_text = f"The groundwater level indicator in {name} is {indicator:.2f}%."
+                    elif depth is not None:
+                        response_text = f"The depth to water level in {name} is {depth:.2f} m bgl."
+                    else:
+                        response_text = f"Groundwater level data is unavailable for {name}."
+                elif depth is not None:
+                    if indicator is not None:
+                        response_text = f"The depth to water level in {name} is {depth:.2f} m bgl (Groundwater Level Indicator: {indicator:.2f}%)."
+                    else:
+                        response_text = f"The depth to water level in {name} is {depth:.2f} m bgl."
+                elif indicator is not None:
+                    response_text = f"The groundwater level in {name} is {indicator:.2f}%."
                 else:
-                    response_text = f"The depth to water level in {name} is {depth:.2f} m bgl." if depth is not None else f"Groundwater level depth data is unavailable for {name}."
+                    response_text = f"Groundwater level data is unavailable for {name}."
             elif conv.current_intent == "RAINFALL":
                 rainfall = details["rainfall"]["value_mm"]
                 response_text = f"The rainfall in {name} is {rainfall:.1f} mm." if rainfall is not None else f"Rainfall data is unavailable for {name}."

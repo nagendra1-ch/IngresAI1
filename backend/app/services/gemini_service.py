@@ -593,11 +593,17 @@ class GeminiService:
             if is_concise_requested:
                 # 1. Groundwater Level / Indicator
                 if any(x in query_lower for x in ["groundwater level", "ground water level", "level", "indicator"]):
-                    if any(x in query_lower for x in ["percent", "percentage", "indicator"]) or not any(x in query_lower for x in ["depth", "mbgl", "m bgl"]):
+                    if any(x in query_lower for x in ["percent", "percentage", "indicator"]):
                         if indicator is not None:
-                            return f"The groundwater level in {name} is {indicator:.2f}%."
-                    if depth is not None:
+                            return f"The groundwater level indicator in {name} is {indicator:.2f}%."
+                        elif depth is not None:
+                            return f"The depth to water level in {name} is {depth:.2f} m bgl."
+                    elif depth is not None:
+                        if indicator is not None:
+                            return f"The depth to water level in {name} is {depth:.2f} m bgl (Groundwater Level Indicator: {indicator:.2f}%)."
                         return f"The depth to water level in {name} is {depth:.2f} m bgl."
+                    elif indicator is not None:
+                        return f"The groundwater level in {name} is {indicator:.2f}%."
                     return f"Groundwater level data is unavailable for {name}."
                     
                 # 2. Rainfall
