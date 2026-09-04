@@ -1263,10 +1263,13 @@ def chat_with_assistant(
             detected_intent = "RAINFALL"
         elif any(x in query_lower for x in ["recharge", "replenish"]):
             detected_intent = "RECHARGE"
-        elif any(x in query_lower for x in ["extraction", "draft", "withdraw"]):
+        elif any(x in query_lower for x in ["extraction", "draft", "withdraw"]) and not any(x in query_lower for x in ["stage", "percent", "percentage", "rate"]):
             detected_intent = "EXTRACTION"
-        elif any(x in query_lower for x in ["stage"]):
-            detected_intent = "STAGE_OF_EXTRACTION"
+        elif any(x in query_lower for x in ["stage", "extraction rate", "rate of extraction", "extraction percent", "extraction percentage", "percentage", "percent"]):
+            if any(x in query_lower for x in ["level", "depth", "water table", "indicator"]):
+                detected_intent = "GROUNDWATER_LEVEL"
+            else:
+                detected_intent = "STAGE_OF_EXTRACTION"
         elif any(x in query_lower for x in ["category", "status", "safe", "critical", "over-exploited"]) and not is_state_query:
             detected_intent = "ASSESSMENT_CATEGORY"
         elif any(x in query_lower for x in ["availability", "available", "surplus"]):
@@ -1768,7 +1771,9 @@ def chat_with_assistant(
                 response_text = f"The annual groundwater extraction in {name} is {extraction:,.2f} ham." if extraction is not None else f"Groundwater extraction data is unavailable for {name}."
             elif conv.current_intent == "STAGE_OF_EXTRACTION":
                 stage = details["resources"]["stage_of_extraction_percent"]
-                response_text = f"The stage of groundwater extraction in {name} is {stage:.2f}%." if stage is not None else f"Stage of groundwater extraction is unavailable for {name}."
+                cat = details["assessment"]["category"]
+                cat_suffix = f" (Assessment Category: {cat})" if cat else ""
+                response_text = f"The stage of groundwater extraction in {name} is {stage:.2f}%{cat_suffix}." if stage is not None else f"Stage of groundwater extraction is unavailable for {name}."
             elif conv.current_intent == "ASSESSMENT_CATEGORY":
                 cat = details["assessment"]["category"]
                 response_text = f"The assessment category for {name} is {cat}." if cat else f"Assessment category is unavailable for {name}."

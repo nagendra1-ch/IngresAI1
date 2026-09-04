@@ -618,10 +618,15 @@ class GeminiService:
                         return f"The annual groundwater recharge in {name} is {recharge:,.2f} ham."
                     return f"Groundwater recharge data is unavailable for {name}."
                     
-                # 4. Extraction
-                elif "extraction" in query_lower or "stage" in query_lower:
-                    if stage is not None:
-                        return f"The stage of groundwater extraction in {name} is {stage:.2f}%."
+                # 4. Extraction & Stage of Extraction / Percentage
+                elif any(x in query_lower for x in ["extraction", "stage", "percentage", "percent"]):
+                    if any(x in query_lower for x in ["stage", "percentage", "percent", "rate"]):
+                        if stage is not None:
+                            cat_suffix = f" (Assessment Category: {cat})" if cat else ""
+                            return f"The stage of groundwater extraction in {name} is {stage:.2f}%{cat_suffix}."
+                        return f"Stage of groundwater extraction is unavailable for {name}."
+                    elif extraction is not None:
+                        return f"The annual groundwater extraction in {name} is {extraction:,.2f} ham."
                     return f"Groundwater extraction data is unavailable for {name}."
                     
                 # 5. Category
