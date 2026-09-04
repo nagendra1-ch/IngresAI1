@@ -5,7 +5,10 @@ from sqlalchemy import func, or_
 from typing import List, Optional
 
 from app.database import get_db
-from app.models import User, QueryHistory, ResultAccess, Geography, GWRAAssessment, RainfallRecord, GroundwaterObservation
+from app.models import (
+    User, QueryHistory, ResultAccess, Geography, GWRAAssessment,
+    RainfallRecord, GroundwaterObservation, Conversation, ConversationMessage
+)
 from app.routes.auth import get_admin_user
 from app.schemas.admin import (
     AdminSummary,
@@ -136,7 +139,7 @@ def delete_user(
     current_user: User = Depends(get_admin_user)
 ):
     """
-    Delete a user account.
+    Delete a user account and clean up associated records.
     """
     target_user = db.query(User).filter_by(id=user_id).first()
     if not target_user:
@@ -146,8 +149,24 @@ def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete your own active administrator account.")
     
     user_email = target_user.email
-    db.delete(target_user)
-    db.commit()
+    try:
+        # Clean up conversations & messages
+        user_convs = db.query(Conversation).filter_by(user_id=target_user.id).all()
+        for conv in user_convs:
+            db.query(ConversationMessage).filter_by(conversation_id=conv.conversation_id).delete(synchronize_session=False)
+            db.delete(conv)
+        
+        # Clean up queries and result accesses
+        db.query(QueryHistory).filter_by(user_id=target_user.id).delete(synchronize_session=False)
+        db.query(ResultAccess).filter_by(user_id=target_user.id).delete(synchronize_session=False)
+        
+        # Delete user
+        db.delete(target_user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {str(e)}")
+
     return {"message": f"User {user_email} deleted successfully."}
 
 @router.get("/queries", response_model=List[AdminQueryLog])

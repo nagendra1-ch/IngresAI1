@@ -16,6 +16,7 @@ class User(Base):
 
     queries = relationship("QueryHistory", back_populates="user", cascade="all, delete-orphan")
     accesses = relationship("ResultAccess", back_populates="user", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
 class Geography(Base):
     __tablename__ = "geographies"
@@ -231,8 +232,9 @@ class Conversation(Base):
     last_user_question = Column(Text, nullable=True)
     last_assistant_answer = Column(Text, nullable=True)
 
-    user = relationship("User", backref="conversations")
+    user = relationship("User", back_populates="conversations")
     geography = relationship("Geography", backref="conversations")
+    messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan")
 
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
@@ -243,4 +245,4 @@ class ConversationMessage(Base):
     text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
-    conversation = relationship("Conversation", backref="messages")
+    conversation = relationship("Conversation", back_populates="messages")

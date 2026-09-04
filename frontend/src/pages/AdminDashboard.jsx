@@ -472,12 +472,12 @@ const AdminDashboard = () => {
               placeholder="Search by name, email or role..." 
               value={userSearch} 
               onChange={(e) => setUserSearch(e.target.value)}
-              style={{ maxWidth: '300px' }}
+              style={{ width: '100%', maxWidth: '300px' }}
             />
           </div>
 
           <div className="table-wrapper">
-            <table className="data-table">
+            <table className="data-table" style={{ minWidth: '760px' }}>
               <thead>
                 <tr>
                   <th>User ID</th>
@@ -515,7 +515,7 @@ const AdminDashboard = () => {
                       <td>{u.queries_count}</td>
                       <td>{new Date(u.created_at).toLocaleDateString()}</td>
                       <td style={{ textAlign: 'center' }}>
-                        <div className="action-btns" style={{ justifyContent: 'center' }}>
+                        <div className="action-btns" style={{ justifyContent: 'center', flexWrap: 'nowrap', gap: '6px' }}>
                           {/* Role Toggle Button */}
                           <button 
                             className={`btn btn-sm ${u.role === 'ADMIN' ? 'btn-outline' : 'btn-warning'}`}
