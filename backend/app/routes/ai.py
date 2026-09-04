@@ -1104,6 +1104,10 @@ def chat_with_assistant(
     db.add(user_msg)
     db.commit()
     
+    # Conversation state flags
+    is_clarifying = conv.pending_intent is not None and conv.pending_location is not None
+    is_followup = conv.current_intent is not None or conv.last_user_question is not None
+
     # 0. Check for greetings or introductory questions
     if is_greeting_or_help_query(query_text) and not is_clarifying and not is_followup:
         response_text = (
